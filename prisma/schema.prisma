@@ -1,0 +1,256 @@
+// Prisma Schema for Artisan Marketplace
+// Supports SQLite (dev) and PostgreSQL (prod)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── User & Auth ──────────────────────────────────────────
+
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  passwordHash      String
+  name              String
+  phone             String?
+  avatar            String?
+  role              String    @default("CUSTOMER") // CUSTOMER, ARTISAN, ADMIN
+  emailVerified     Boolean   @default(false)
+  verificationToken String?
+  resetToken        String?
+  resetTokenExpiry  DateTime?
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  artisanProfile  ArtisanProfile?
+  bookingsAsCustomer Booking[]   @relation("CustomerBookings")
+  reviewsWritten  Review[]       @relation("ReviewAuthor")
+  favorites       Favorite[]     @relation("UserFavorites")
+  notifications   Notification[]
+  sentMessages    Message[]      @relation("SentMessages")
+  conversations1  Conversation[] @relation("ConversationUser1")
+  conversations2  Conversation[] @relation("ConversationUser2")
+
+  @@index([email])
+  @@index([role])
+}
+
+model ArtisanProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profession      String
+  description     String
+  yearsExperience Int      @default(0)
+  serviceArea     String   // City or region
+  latitude        Float?
+  longitude       Float?
+  skills          String   // JSON array stored as string for SQLite compatibility
+  portfolioImages String   // JSON array of image URLs
+  approvalStatus  String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  avgRating       Float    @default(0)
+  totalReviews    Int      @default(0)
+  isAvailable     Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  services        ArtisanService[]
+  bookings        Booking[]  @relation("ArtisanBookings")
+  reviews         Review[]   @relation("ArtisanReviews")
+  favoritedBy     Favorite[] @relation("FavoritedArtisan")
+  availability    Availability[]
+
+  @@index([approvalStatus])
+  @@index([profession])
+  @@index([serviceArea])
+  @@index([avgRating])
+}
+
+// ─── Categories & Services ────────────────────────────────
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  icon        String?  // Icon identifier or SVG
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  services    Service[]
+
+  @@index([slug])
+}
+
+model Service {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  artisanServices ArtisanService[]
+  bookings        Booking[]
+
+  @@index([categoryId])
+  @@index([slug])
+}
+
+model ArtisanService {
+  id               String         @id @default(cuid())
+  artisanProfileId String
+  artisanProfile   ArtisanProfile @relation(fields: [artisanProfileId], references: [id], onDelete: Cascade)
+  serviceId        String
+  service          Service        @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  estimatedDuration Int?          // in minutes
+  createdAt        DateTime       @default(now())
+
+  @@unique([artisanProfileId, serviceId])
+}
+
+// ─── Bookings ─────────────────────────────────────────────
+
+model Booking {
+  id               String   @id @default(cuid())
+  customerId       String
+  customer         User     @relation("CustomerBookings", fields: [customerId], references: [id])
+  artisanProfileId String
+  artisanProfile   ArtisanProfile @relation("ArtisanBookings", fields: [artisanProfileId], references: [id])
+  serviceId        String
+  service          Service  @relation(fields: [serviceId], references: [id])
+  status           String   @default("PENDING") // PENDING, ACCEPTED, IN_PROGRESS, COMPLETED, CANCELLED
+  scheduledDate    DateTime
+  scheduledTime    String   // HH:MM format
+  estimatedDuration Int?    // in minutes
+  address          String
+  city             String
+  problemDescription String
+  cancellationReason String?
+  cancelledBy      String?  // CUSTOMER or ARTISAN
+  completedAt      DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  review           Review?
+
+  @@index([customerId])
+  @@index([artisanProfileId])
+  @@index([status])
+  @@index([scheduledDate])
+}
+
+// ─── Reviews ──────────────────────────────────────────────
+
+model Review {
+  id               String         @id @default(cuid())
+  bookingId        String         @unique
+  booking          Booking        @relation(fields: [bookingId], references: [id])
+  authorId         String
+  author           User           @relation("ReviewAuthor", fields: [authorId], references: [id])
+  artisanProfileId String
+  artisanProfile   ArtisanProfile @relation("ArtisanReviews", fields: [artisanProfileId], references: [id])
+  rating           Int            // 1-5
+  comment          String
+  isApproved       Boolean        @default(false)
+  moderatedAt      DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([artisanProfileId])
+  @@index([isApproved])
+  @@index([rating])
+}
+
+// ─── Messaging ────────────────────────────────────────────
+
+model Conversation {
+  id        String    @id @default(cuid())
+  user1Id   String
+  user1     User      @relation("ConversationUser1", fields: [user1Id], references: [id])
+  user2Id   String
+  user2     User      @relation("ConversationUser2", fields: [user2Id], references: [id])
+  lastMessageAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  messages  Message[]
+
+  @@unique([user1Id, user2Id])
+  @@index([user1Id])
+  @@index([user2Id])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User         @relation("SentMessages", fields: [senderId], references: [id])
+  content        String
+  isRead         Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+  @@index([senderId])
+}
+
+// ─── Notifications ────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // BOOKING_REQUEST, BOOKING_ACCEPTED, BOOKING_CANCELLED, REVIEW_POSTED, MESSAGE_RECEIVED, ARTISAN_APPROVED
+  title     String
+  body      String
+  link      String?  // Internal navigation link
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([isRead])
+}
+
+// ─── Favorites ────────────────────────────────────────────
+
+model Favorite {
+  id               String         @id @default(cuid())
+  userId           String
+  user             User           @relation("UserFavorites", fields: [userId], references: [id], onDelete: Cascade)
+  artisanProfileId String
+  artisanProfile   ArtisanProfile @relation("FavoritedArtisan", fields: [artisanProfileId], references: [id], onDelete: Cascade)
+  createdAt        DateTime       @default(now())
+
+  @@unique([userId, artisanProfileId])
+  @@index([userId])
+}
+
+// ─── Availability ─────────────────────────────────────────
+
+model Availability {
+  id               String         @id @default(cuid())
+  artisanProfileId String
+  artisanProfile   ArtisanProfile @relation(fields: [artisanProfileId], references: [id], onDelete: Cascade)
+  dayOfWeek        Int            // 0=Sunday, 1=Monday, ..., 6=Saturday
+  startTime        String         // HH:MM
+  endTime          String         // HH:MM
+  isBlocked        Boolean        @default(false) // true = day off
+  specificDate     DateTime?      // For specific date overrides
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([artisanProfileId])
+  @@index([dayOfWeek])
+}
